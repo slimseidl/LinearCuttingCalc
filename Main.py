@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import plotly.graph_objects as go
+import pyodbc
 
 # --- Helper: Convert Feet + Inches to Inches ---
 def to_inches(feet, inches):
@@ -107,6 +108,7 @@ if method == "Load from Epicor SQL":
     if st.button("Refresh from Epicor SQL"):
         try:
             conn_str = st.secrets["conn_str"]
+            conn = pyodbc.connect(conn_str)
 
             with open("query.sql", "r") as file:
                 sql = file.read()

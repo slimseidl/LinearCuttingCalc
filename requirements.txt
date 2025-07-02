@@ -1,0 +1,5 @@
+# Requirements
+streamlit
+math
+pandas
+plotly.graph_objects

@@ -107,9 +107,8 @@ if "cuts_by_material" not in st.session_state:
 if method == "Load from Epicor SQL":
     if st.button("Refresh from Epicor SQL"):
         try:
-            conn_str = st.secrets["conn_str"]
+            from app_secrets import conn_str
             conn = pyodbc.connect(conn_str)
-
             with open("query.sql", "r") as file:
                 sql = file.read()
             df = pd.read_sql(sql, conn)

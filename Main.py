@@ -109,6 +109,7 @@ if method == "Load from Epicor SQL":
         try:
             from app_secrets import conn_str
             conn = pyodbc.connect(conn_str)
+
             with open("query.sql", "r") as file:
                 sql = file.read()
             df = pd.read_sql(sql, conn)
@@ -125,7 +126,11 @@ if method == "Load from Epicor SQL":
 
             grouped = df.groupby("JobMtl_PartNum")
             cuts_by_material = {
-                material: (list(zip(group["Length"], group["TotalQty"], group["Label"], group["JobHead_JobNum"], group["JobOper_AssemblySeq"])), group["EarliestStart"].min())
+                material: (
+                    list(zip(group["Length"], group["TotalQty"], group["Label"], group["JobHead_JobNum"], group["JobOper_AssemblySeq"])),
+                    group["EarliestStart"].min(),
+                    group["JobMtl_Description"].iloc[0]
+                )
                 for material, group in grouped
             }
 
@@ -141,9 +146,9 @@ if method == "Load from Epicor SQL":
 if st.session_state["cuts_by_material"]:
     last_optimized = st.session_state.get("last_optimized", None)
 
-    for material, (cuts, start_date) in st.session_state["cuts_by_material"].items():
+    for material, (cuts, start_date, mtl_desc) in st.session_state["cuts_by_material"].items():
         is_expanded = (material == last_optimized)
-        with st.expander(f"Material: {material} ({len(cuts)} cuts, Start: {start_date})", expanded=is_expanded):
+        with st.expander(f"Material: {material} - {mtl_desc} ({len(cuts)} cuts, Start: {start_date})", expanded=is_expanded):
             col1, col2 = st.columns(2)
             with col1:
                 ft = st.number_input(f"Stock Length (ft) for {material}", min_value=0, value=21, key=f"ft_{material}")

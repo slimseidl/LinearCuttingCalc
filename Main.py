@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import plotly.graph_objects as go
+import pyodbc
 
 # --- Convert Feet + Inches to Inches ---
 def to_inches(feet, inches):
@@ -100,7 +101,9 @@ else:
 stock_qty = st.sidebar.number_input("Number of Stock Pieces", min_value=1, value=1)
 
 # Upload CSV or manually enter
-method = st.sidebar.radio("Input Method", ["Manual Entry", "Upload CSV"])
+method = st.sidebar.radio("Input Method", ["Manual Entry", "Upload CSV", "Load from Epicor SQL"])
+
+
 
 cuts = []
 if method == "Manual Entry":

@@ -15,42 +15,44 @@ def to_feet_inches(inches):
     return f"{feet}' {remaining_inches}\""
 
 # --- Helper: Greedy Cut Optimization (First Fit Decreasing) ---
-def optimize_cuts(stock_length, cuts, stock_qty):
+def optimize_cuts(stock_lengths, cuts):
     cuts = sorted(cuts, key=lambda x: x[0], reverse=True)
-    layouts = [[] for _ in range(stock_qty)]
+    layouts = []
+
+    stock_pool = []
+    for length, qty in stock_lengths:
+        stock_pool.extend([length] * qty)
+
+    for stock in stock_pool:
+        layouts.append({"stock_length": stock, "cuts": []})
 
     for length, qty, label, jobnum, asmseq in cuts:
-        placed_qty = 0
         for _ in range(int(qty)):
             placed = False
             for layout in layouts:
-                used = sum([c[0] for c in layout])
-                if used + length <= stock_length:
-                    layout.append((length, label, jobnum, asmseq))
+                used = sum([c[0] for c in layout["cuts"]])
+                if used + length <= layout["stock_length"]:
+                    layout["cuts"].append((length, label, jobnum, asmseq))
                     placed = True
-                    placed_qty += 1
                     break
             if not placed:
-                if len(layouts) < 10:  # Cap the number of layouts to 10
-                    layouts.append([(length, label, jobnum, asmseq)])
-                    placed_qty += 1
-                else:
-                    break  # Stop placing if cap is reached
+                break
 
     return layouts
 
 # --- Visualization Helper ---
-def display_layout(layouts, stock_length):
+def display_layout(layouts):
     any_displayed = False
     for i, layout in enumerate(layouts):
-        if not layout:
+        if not layout["cuts"]:
             continue
 
         any_displayed = True
+        stock_length = layout["stock_length"]
         st.markdown(f"### Layout {chr(65 + i)}")
         st.write(f"Stock Length: {to_feet_inches(stock_length)}")
 
-        df = pd.DataFrame(layout, columns=["Length", "Label", "JobNum", "AsmSeq"])
+        df = pd.DataFrame(layout["cuts"], columns=["Length", "Label", "JobNum", "AsmSeq"])
         df["CombinedLabel"] = df.apply(lambda row: f"{row['Label']}\nJob: {row['JobNum']}\nAsm: {row['AsmSeq']}", axis=1)
         part_summary = df.groupby(["Length", "Label", "JobNum", "AsmSeq"]).size().reset_index(name="Qty")
         part_summary["Length (ft/in)"] = part_summary["Length"].apply(to_feet_inches)
@@ -149,18 +151,27 @@ if st.session_state["cuts_by_material"]:
     for material, (cuts, start_date, mtl_desc) in st.session_state["cuts_by_material"].items():
         is_expanded = (material == last_optimized)
         with st.expander(f"Material: {material} - {mtl_desc} ({len(cuts)} cuts, Start: {start_date})", expanded=is_expanded):
-            col1, col2 = st.columns(2)
-            with col1:
-                ft = st.number_input(f"Stock Length (ft) for {material}", min_value=0, value=21, key=f"ft_{material}")
-                inch = st.number_input(f"Additional Inches", min_value=0, value=0, key=f"in_{material}")
-                stock_length = to_inches(ft, inch)
-            with col2:
-                stock_qty = st.number_input(f"Number of Stock Pieces", min_value=1, value=1, key=f"qty_{material}")
+            st.write("### Add Stock Lengths")
+            stock_entries = st.session_state.get(f"stock_entries_{material}", [(21, 0, 1)])
+            updated_stock_entries = []
+
+            for i, (ft, inch, qty) in enumerate(stock_entries):
+                cols = st.columns(3)
+                ft_val = cols[0].number_input(f"Length {i+1} - Feet", value=ft, key=f"ft_{material}_{i}")
+                inch_val = cols[1].number_input(f"Inches", value=inch, key=f"in_{material}_{i}")
+                qty_val = cols[2].number_input(f"Qty", value=qty, key=f"qty_{material}_{i}")
+                updated_stock_entries.append((ft_val, inch_val, qty_val))
+
+            if st.button(f"+ Add Another Length", key=f"add_{material}"):
+                updated_stock_entries.append((0, 0, 1))
+
+            st.session_state[f"stock_entries_{material}"] = updated_stock_entries
 
             if st.button(f"Optimize {material}", key=f"btn_{material}"):
                 st.session_state["last_optimized"] = material
-                layouts = optimize_cuts(stock_length, cuts, stock_qty)
-                st.write(f"Total stock used: **{len([l for l in layouts if l])} / {stock_qty} available**")
-                display_layout(layouts, stock_length)
+                stock_lengths = [(to_inches(ft, inch), qty) for ft, inch, qty in updated_stock_entries]
+                layouts = optimize_cuts(stock_lengths, cuts)
+                st.write(f"Total stock used: **{len([l for l in layouts if l['cuts']])} pieces**")
+                display_layout(layouts)
 else:
     st.info("Load data to begin optimizing.")

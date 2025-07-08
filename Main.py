@@ -4,28 +4,38 @@ import math
 import plotly.graph_objects as go
 import pyodbc
 
-# --- Helper: Convert Feet + Inches to Inches ---
+# ================================================
+# Helper Functions
+# ================================================
+
+# --- Convert feet + inches to total inches ---
 def to_inches(feet, inches):
     return feet * 12 + inches
 
-# --- Helper: Convert Inches to Feet and Inches (for display) ---
+# --- Convert total inches to feet + inches (string format) ---
 def to_feet_inches(inches):
     feet = int(inches) // 12
     remaining_inches = round(inches - feet * 12, 2)
     return f"{feet}' {remaining_inches}\""
 
-# --- Helper: Greedy Cut Optimization (First Fit Decreasing) ---
+# --- Greedy Cut Optimization using First-Fit Decreasing algorithm ---
+# This function takes available stock lengths and the required cuts
+# and assigns the cuts to stock pieces minimizing waste.
 def optimize_cuts(stock_lengths, cuts):
+    # Sort cuts from longest to shortest
     cuts = sorted(cuts, key=lambda x: x[0], reverse=True)
     layouts = []
 
+    # Create pool of all available stock pieces
     stock_pool = []
     for length, qty in stock_lengths:
         stock_pool.extend([length] * qty)
 
+    # Create layout containers for each stock piece
     for stock in stock_pool:
         layouts.append({"stock_length": stock, "cuts": []})
 
+    # Attempt to place each cut in an existing layout
     for length, qty, label, jobnum, asmseq in cuts:
         for _ in range(int(qty)):
             placed = False
@@ -40,13 +50,18 @@ def optimize_cuts(stock_lengths, cuts):
 
     return layouts
 
-# --- Optimize by Total Linear Inventory (single stock length repeatedly used) ---
+# --- Optimization by total linear inventory ---
+# Useful when you want to optimize from a bulk inventory instead of discrete pieces.
 def optimize_by_total_inventory(total_inches, stock_length, cuts):
     max_pieces = total_inches // stock_length
     stock_lengths = [(stock_length, int(max_pieces))]
     return optimize_cuts(stock_lengths, cuts)
 
-# --- Visualization Helper ---
+# ================================================
+# Visualization of Cut Layouts
+# ================================================
+
+# --- Display the layout using plotly and Streamlit ---
 def display_layout(layouts):
     any_displayed = False
     for i, layout in enumerate(layouts):
@@ -55,18 +70,24 @@ def display_layout(layouts):
 
         any_displayed = True
         stock_length = layout["stock_length"]
+
         st.markdown(f"### Layout {chr(65 + i)}")
         st.write(f"Stock Length: {to_feet_inches(stock_length)}")
 
+        # Create a dataframe for this layout
         df = pd.DataFrame(layout["cuts"], columns=["Length", "Label", "JobNum", "AsmSeq"])
         df["CombinedLabel"] = df.apply(lambda row: f"{row['Label']}\nJob: {row['JobNum']}\nAsm: {row['AsmSeq']}", axis=1)
+
+        # Summarize the part details for display
         part_summary = df.groupby(["Length", "Label", "JobNum", "AsmSeq"]).size().reset_index(name="Qty")
         part_summary["Length (ft/in)"] = part_summary["Length"].apply(to_feet_inches)
         st.dataframe(part_summary[["Length (ft/in)", "Label", "JobNum", "AsmSeq", "Qty"]])
 
+        # Calculate waste for this layout
         waste = stock_length - sum(df["Length"])
         st.write(f"Material remnant: {to_feet_inches(waste)}")
 
+        # Plot horizontal bar chart
         fig = go.Figure(layout=dict(margin=dict(l=60, r=60, t=30, b=30), autosize=False, width=1400))
         for j, row in df.iterrows():
             fig.add_trace(go.Bar(
@@ -81,6 +102,7 @@ def display_layout(layouts):
                 marker=dict(line=dict(width=1))
             ))
 
+        # Add waste section if needed
         if waste > 0:
             fig.add_trace(go.Bar(
                 x=[waste],
@@ -104,34 +126,46 @@ def display_layout(layouts):
     if not any_displayed:
         st.warning("None of the cuts fit within the available stock length.")
 
-# --- Streamlit UI ---
+# ================================================
+# Streamlit App Interface
+# ================================================
+
 st.title("Linear Cutting Calculator")
 
+# User chooses input method
 method = st.sidebar.radio("Input Method", ["Manual Entry", "Upload CSV", "Load from Epicor SQL"], index=2)
 
+# Keep session state for all materials and their cut details
 if "cuts_by_material" not in st.session_state:
     st.session_state["cuts_by_material"] = {}
 
+# --------------------------------------------
+# Load data from Epicor SQL if selected
+# --------------------------------------------
 if method == "Load from Epicor SQL":
     if st.button("Refresh from Epicor SQL"):
         try:
+            # Use secret connection string
             from app_secrets import conn_str
             conn = pyodbc.connect(conn_str)
 
+            # Read SQL from file
             with open("query.sql", "r") as file:
                 sql = file.read()
             df = pd.read_sql(sql, conn)
 
+            # Filter only jobs starting in next 15 days
             df = df[pd.to_datetime(df['JobOper_StartDate']).dt.date <= pd.Timestamp.today().date() + pd.Timedelta(days=15)]
 
+            # Calculate needed fields
             df["CutQty"] = df["JobMtl_RequiredQty"]
             df["RunQty"] = df["JobOper_RunQty"]
             df["Length"] = df["CutQty"] / 18.97 * 12
             df["TotalQty"] = df["RunQty"]
             df["Label"] = df["JobAsmbl_Description"]
-
             df["EarliestStart"] = pd.to_datetime(df['JobOper_StartDate']).dt.date
 
+            # Group by material part number
             grouped = df.groupby("JobMtl_PartNum")
             cuts_by_material = {
                 material: (
@@ -142,6 +176,7 @@ if method == "Load from Epicor SQL":
                 for material, group in grouped
             }
 
+            # Store in session in order of earliest start date
             sorted_materials = sorted(cuts_by_material.items(), key=lambda x: x[1][1])
             st.session_state["cuts_by_material"] = {material: data for material, data in sorted_materials}
 
@@ -150,15 +185,21 @@ if method == "Load from Epicor SQL":
         except Exception as e:
             st.error(f"Failed to load data from SQL: {e}")
 
-# --- Optimizer per Material ---
+# ================================================
+# Optimizer UI for each material
+# ================================================
+
 if st.session_state["cuts_by_material"]:
     last_optimized = st.session_state.get("last_optimized", None)
 
     for material, (cuts, start_date, mtl_desc) in st.session_state["cuts_by_material"].items():
         is_expanded = (material == last_optimized)
         total_qty = sum([int(qty) for length, qty, label, jobnum, asmseq in cuts])
+
         with st.expander(f"Material: {material} - {mtl_desc} ({total_qty} cuts, Start: {start_date})", expanded=is_expanded):
             st.write("### Add Stock Lengths")
+
+            # Choose optimization mode: discrete lengths vs total inventory
             mode = st.radio("Optimization Mode", ["Fixed Stock Lengths", "Total Linear Inventory"], key=f"mode_{material}")
 
             if mode == "Fixed Stock Lengths":
@@ -172,11 +213,13 @@ if st.session_state["cuts_by_material"]:
                     qty_val = cols[2].number_input(f"Qty", value=qty, key=f"qty_{material}_{i}")
                     updated_stock_entries.append((ft_val, inch_val, qty_val))
 
+                # Add another stock length row
                 if st.button(f"+ Add Another Length", key=f"add_{material}"):
                     updated_stock_entries.append((0, 0, 1))
 
                 st.session_state[f"stock_entries_{material}"] = updated_stock_entries
 
+                # Run optimization
                 if st.button(f"Optimize {material}", key=f"btn_{material}"):
                     st.session_state["last_optimized"] = material
                     stock_lengths = [(to_inches(ft, inch), qty) for ft, inch, qty in updated_stock_entries]
@@ -190,6 +233,7 @@ if st.session_state["cuts_by_material"]:
                 total_inches = to_inches(ft, 0)
                 stock_length = to_inches(stock_len_ft, 0)
 
+                # Run optimization using total available linear feet
                 if st.button(f"Optimize {material} (by inventory)", key=f"btn_inv_{material}"):
                     st.session_state["last_optimized"] = material
                     layouts = optimize_by_total_inventory(total_inches, stock_length, cuts)

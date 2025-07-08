@@ -40,6 +40,12 @@ def optimize_cuts(stock_lengths, cuts):
 
     return layouts
 
+# --- Optimize by Total Linear Inventory (single stock length repeatedly used) ---
+def optimize_by_total_inventory(total_inches, stock_length, cuts):
+    max_pieces = total_inches // stock_length
+    stock_lengths = [(stock_length, int(max_pieces))]
+    return optimize_cuts(stock_lengths, cuts)
+
 # --- Visualization Helper ---
 def display_layout(layouts):
     any_displayed = False
@@ -150,28 +156,44 @@ if st.session_state["cuts_by_material"]:
 
     for material, (cuts, start_date, mtl_desc) in st.session_state["cuts_by_material"].items():
         is_expanded = (material == last_optimized)
-        with st.expander(f"Material: {material} - {mtl_desc} ({len(cuts)} cuts, Start: {start_date})", expanded=is_expanded):
+        total_qty = sum([int(qty) for length, qty, label, jobnum, asmseq in cuts])
+        with st.expander(f"Material: {material} - {mtl_desc} ({total_qty} cuts, Start: {start_date})", expanded=is_expanded):
             st.write("### Add Stock Lengths")
-            stock_entries = st.session_state.get(f"stock_entries_{material}", [(21, 0, 1)])
-            updated_stock_entries = []
+            mode = st.radio("Optimization Mode", ["Fixed Stock Lengths", "Total Linear Inventory"], key=f"mode_{material}")
 
-            for i, (ft, inch, qty) in enumerate(stock_entries):
-                cols = st.columns(3)
-                ft_val = cols[0].number_input(f"Length {i+1} - Feet", value=ft, key=f"ft_{material}_{i}")
-                inch_val = cols[1].number_input(f"Inches", value=inch, key=f"in_{material}_{i}")
-                qty_val = cols[2].number_input(f"Qty", value=qty, key=f"qty_{material}_{i}")
-                updated_stock_entries.append((ft_val, inch_val, qty_val))
+            if mode == "Fixed Stock Lengths":
+                stock_entries = st.session_state.get(f"stock_entries_{material}", [(21, 0, 1)])
+                updated_stock_entries = []
 
-            if st.button(f"+ Add Another Length", key=f"add_{material}"):
-                updated_stock_entries.append((0, 0, 1))
+                for i, (ft, inch, qty) in enumerate(stock_entries):
+                    cols = st.columns(3)
+                    ft_val = cols[0].number_input(f"Length {i+1} - Feet", value=ft, key=f"ft_{material}_{i}")
+                    inch_val = cols[1].number_input(f"Inches", value=inch, key=f"in_{material}_{i}")
+                    qty_val = cols[2].number_input(f"Qty", value=qty, key=f"qty_{material}_{i}")
+                    updated_stock_entries.append((ft_val, inch_val, qty_val))
 
-            st.session_state[f"stock_entries_{material}"] = updated_stock_entries
+                if st.button(f"+ Add Another Length", key=f"add_{material}"):
+                    updated_stock_entries.append((0, 0, 1))
 
-            if st.button(f"Optimize {material}", key=f"btn_{material}"):
-                st.session_state["last_optimized"] = material
-                stock_lengths = [(to_inches(ft, inch), qty) for ft, inch, qty in updated_stock_entries]
-                layouts = optimize_cuts(stock_lengths, cuts)
-                st.write(f"Total stock used: **{len([l for l in layouts if l['cuts']])} pieces**")
-                display_layout(layouts)
+                st.session_state[f"stock_entries_{material}"] = updated_stock_entries
+
+                if st.button(f"Optimize {material}", key=f"btn_{material}"):
+                    st.session_state["last_optimized"] = material
+                    stock_lengths = [(to_inches(ft, inch), qty) for ft, inch, qty in updated_stock_entries]
+                    layouts = optimize_cuts(stock_lengths, cuts)
+                    st.write(f"Total stock used: **{len([l for l in layouts if l['cuts']])} pieces**")
+                    display_layout(layouts)
+
+            elif mode == "Total Linear Inventory":
+                ft = st.number_input("Total Linear Feet", value=400, key=f"lin_ft_{material}")
+                stock_len_ft = st.number_input("Stock Length (Feet)", value=21, key=f"lin_stock_{material}")
+                total_inches = to_inches(ft, 0)
+                stock_length = to_inches(stock_len_ft, 0)
+
+                if st.button(f"Optimize {material} (by inventory)", key=f"btn_inv_{material}"):
+                    st.session_state["last_optimized"] = material
+                    layouts = optimize_by_total_inventory(total_inches, stock_length, cuts)
+                    st.write(f"Total stock used: **{len([l for l in layouts if l['cuts']])} pieces**")
+                    display_layout(layouts)
 else:
     st.info("Load data to begin optimizing.")
